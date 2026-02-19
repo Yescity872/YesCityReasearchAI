@@ -1,5 +1,6 @@
-from typing import Optional,Dict,Any,List
-from langchain_core import BaseTool
+from typing import Optional,Dict,Any,List,Type
+from pydantic import BaseModel, Field, ConfigDict
+from langchain_core.tools import BaseTool
 from .base_tool import MongoDBQueryTool
 import time
 
@@ -27,12 +28,12 @@ class ShoppingSearchTool(BaseTool):
         **kwargs
     )->List[Dict[str,Any]]:
         start_time = time.time()
-        query_filter:{"cityName":{"$regex":cityName,"$options":"i"}}
+        query_filter={"cityName":{"$regex":cityName,"$options":"i"}}
 
-        if category and category!='null' and category.lower()!='none':
-            query_filter["category"]={"$regex":category,"$options":"i"}
+        # if category and category!='null' and category.lower()!='none':
+        #     query_filter["category"]={"$regex":category,"$options":"i"}
 
-        print("Fetching shopping places in ",cityName,"with category",category)
+        print("Fetching shopping places in ",cityName)
 
         base_tool=MongoDBQueryTool(
             collection_name="shoppings",
