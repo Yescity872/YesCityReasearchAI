@@ -39,6 +39,10 @@ class ErrorResponse(BaseModel):
     error: str
     status: str
 
+@app.head('/')
+def root_head():
+    return "YesCityAI api is running"
+
 # Startup event
 @app.on_event("startup")
 async def startup_event():

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from langchain_community.llms import Ollama
 from langchain_core.prompts import PromptTemplate
 from dotenv import load_dotenv
+from langchain_groq import ChatGroq
 
 load_dotenv()
 
@@ -17,15 +18,27 @@ class QueryCategory(BaseModel):
 
 class QueryClassifier:
     def __init__(self):
-        Ollama_url=os.getenv("OLLAMA_BASE_URL","http://localhost:11434")
-        model="llama3.2:3b"
-        # model="qwen2.5:7b"
+        # Ollama_url=os.getenv("OLLAMA_BASE_URL","http://localhost:11434")
+        # model="llama3.2:3b"
+        # # model="qwen2.5:7b"
 
-        self.llm=Ollama(
-            base_url=Ollama_url,
-            model=model,
+        # self.llm=Ollama(
+        #     base_url=Ollama_url,
+        #     model=model,
+        #     temperature=0.1,
+        #     timeout=6000,
+        # )
+
+        self.llm = ChatGroq(
+            groq_api_key=os.getenv("GROQ_API_KEY"),
+            model_name="llama-3.1-8b-instant",
             temperature=0.1,
-            timeout=6000,
+            max_tokens=1024,
+            model_kwargs={
+                "top_p": 0.9,
+                "frequency_penalty": 0.1,
+                "presence_penalty": 0.1
+            }
         )
 
         self.categories=[
@@ -100,7 +113,26 @@ class QueryClassifier:
             )
 
             response=self.llm.invoke(prompt)
-            response_text=response.strip()
+
+            # ✅ FIX: Extract content from AIMessage
+            if hasattr(response, 'content'):
+                response_text = response.content
+            else:
+                response_text = str(response)
+            
+            # Clean up response
+            response_text = response_text.strip()
+            
+            # Remove any markdown code blocks if present
+            if response_text.startswith('```json'):
+                response_text = response_text[7:]
+            elif response_text.startswith('```'):
+                response_text = response_text[3:]
+            
+            if response_text.endswith('```'):
+                response_text = response_text[:-3]
+            
+            response_text = response_text.strip()
             
             end_time = time.time()
             response_time = end_time - start_time
