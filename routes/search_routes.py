@@ -4,6 +4,7 @@ from services.query_classifier import query_classifier, QueryCategory
 
 # Wrappers
 from wrappers.shopping_wrapper import shopping_wrapper
+from wrappers.food_wrapper import food_wrapper
 
 class SearchRouter:
     def handle_request(self, user_query: str) -> str:
@@ -28,9 +29,14 @@ class SearchRouter:
                 )
 
             elif classification.category == "foods":
-                print("   ➡️ Dispatching to FoodWrapper (Not implemented, using legacy logic if available)...")
+                print("   ➡️ Dispatching to FoodWrapper")
                 # Placeholder for FoodWrapper
-                return '{"error": "Food category not yet refactored to wrapper pattern"}'
+                return food_wrapper.run_food_flow(
+                    city_name=classification.cityName,
+                    parameters=classification.parameters,
+                    user_query=user_query,
+                    category=classification.category
+                )
                 
             else:
                 print(f"⚠️ Tool for category '{classification.category}' is not implemented yet.")
