@@ -148,5 +148,3 @@ class QueryClassifier:
             raise ValueError(f"Error classifying query: {e}")
 
 query_classifier=QueryClassifier()
-result = query_classifier.classify_query("Find pizza places in Agra")
-print(f"Classification Result: {result}")
