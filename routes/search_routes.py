@@ -5,6 +5,7 @@ from services.query_classifier import query_classifier, QueryCategory
 # Wrappers
 from wrappers.shopping_wrapper import shopping_wrapper
 from wrappers.food_wrapper import food_wrapper
+from wrappers.accomodation_wrapper import accomodation_wrapper
 
 class SearchRouter:
     def handle_request(self, user_query: str) -> str:
@@ -37,6 +38,17 @@ class SearchRouter:
                     user_query=user_query,
                     category=classification.category
                 )
+            
+            elif classification.category == "accommodations":
+                print("   ➡️ Dispatching to AccomodationWrapper")
+                # Placeholder for FoodWrapper
+                return accomodation_wrapper.run_accomodation_flow(
+                    city_name=classification.cityName,
+                    parameters=classification.parameters,
+                    user_query=user_query,
+                    category=classification.category
+                )
+            
                 
             else:
                 print(f"⚠️ Tool for category '{classification.category}' is not implemented yet.")

@@ -43,7 +43,7 @@ class QueryClassifier:
 
         self.categories=[
             "foods",
-            "accomodation",
+            "accommodations",
             "activities",
             "transport", # local transport + connectivities
             "shoppings",
