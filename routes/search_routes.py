@@ -6,6 +6,9 @@ from services.query_classifier import query_classifier, QueryCategory
 from wrappers.shopping_wrapper import shopping_wrapper
 from wrappers.food_wrapper import food_wrapper
 from wrappers.accomodation_wrapper import accomodation_wrapper
+from wrappers.place_wrapper import place_wrapper
+from wrappers.activities_wrapper import activities_wrapper
+from wrappers.transport_wrapper import transport_wrapper
 
 class SearchRouter:
     def handle_request(self, user_query: str) -> str:
@@ -43,6 +46,36 @@ class SearchRouter:
                 print("   ➡️ Dispatching to AccomodationWrapper")
                 # Placeholder for FoodWrapper
                 return accomodation_wrapper.run_accomodation_flow(
+                    city_name=classification.cityName,
+                    parameters=classification.parameters,
+                    user_query=user_query,
+                    category=classification.category
+                )
+
+            elif classification.category == "places":
+                print("   ➡️ Dispatching to PLacesWrapper")
+                # Placeholder for FoodWrapper
+                return place_wrapper.run_place_flow(
+                    city_name=classification.cityName,
+                    parameters=classification.parameters,
+                    user_query=user_query,
+                    category=classification.category
+                )
+
+            elif classification.category == "activities":
+                print("   ➡️ Dispatching to ActivitiesWrapper")
+                # Placeholder for FoodWrapper
+                return activities_wrapper.run_activities_flow(
+                    city_name=classification.cityName,
+                    parameters=classification.parameters,
+                    user_query=user_query,
+                    category=classification.category
+                )
+
+            elif classification.category == "transport":
+                print("   ➡️ Dispatching to TransportWrapper")
+                # Placeholder for FoodWrapper
+                return transport_wrapper.run_transport_flow(
                     city_name=classification.cityName,
                     parameters=classification.parameters,
                     user_query=user_query,
