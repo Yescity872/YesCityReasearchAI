@@ -11,6 +11,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from database.mongodb_client import mongodb_client
 from routes.search_routes import search_router
+from routes.itinerary_routes import router as itinerary_router
 
 load_dotenv()
 
@@ -25,6 +26,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register routers
+app.include_router(itinerary_router, prefix="/api")
 
 # Pydantic models for request/response
 class SearchRequest(BaseModel):
