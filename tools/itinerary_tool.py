@@ -1,24 +1,60 @@
 """
 itinerary_tool.py
 ─────────────────
-Fetches wishlist items for a given user + city from MongoDB, then resolves
-each item by calling the appropriate existing tool (place, shopping, activities).
+Structured like the other project tools (BaseTool subclass).
+
+Strategy:
+  1. Group wishlist items by onModel type.
+  2. Call the pre-built tools (place / shopping / activities) by cityName
+     to get all relevant docs in one batch.
+  3. Filter those results to only the _ids that appear in the wishlist.
+  4. Keep ONLY essential slim fields → minimises LLM input tokens.
 
 onModel routing:
-  Place | HiddenGem | NearbySpot  →  place_tool  (collections: placestovisits, hiddengems, nearbytouristspots)
-  Shop                            →  shopping_tool (collection: shoppings)
-  Activity                        →  activities_tool (collection: activities)
-  Accommodation / festivals / *   →  direct MongoDB lookup via base_tool
+  Place | HiddenGem | NearbySpot  →  place_search_tool
+  Shop                            →  shopping_search_tool
+  Activity                        →  activities_tool
+  Accommodation / festivals / *   →  direct MongoDBQueryTool lookup by _id
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Optional, Dict, Any, List, Type
+from pydantic import BaseModel, Field, ConfigDict
+from langchain_core.tools import BaseTool
 from bson import ObjectId
+import time
+
 from database.mongodb_client import mongodb_client
 from tools.base_tool import MongoDBQueryTool
+from tools.place_tool import place_search_tool
+from tools.shopping_tool import shopping_search_tool
+from tools.activities_tool import activities_tool
 
 
-# ── Collection map for onModels not handled by specialised tools ───────────────
-_DIRECT_COLLECTION_MAP: Dict[str, str] = {
+# ── Input schema ───────────────────────────────────────────────────────────────
+
+class ItineraryToolInput(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    user_id:   str = Field(..., description="MongoDB ObjectId of the user")
+    city_name: str = Field(..., description="City to filter wishlist items by")
+
+
+# ── Slim field sets (only what the LLM needs to plan an itinerary) ─────────────
+
+_PLACE_FIELDS    = ("_id", "places", "hiddenGem", "category", "description",
+                    "address", "openDay", "openTime", "lat", "lon", "fee", "type")
+_SHOPPING_FIELDS = ("_id", "shops", "famousFor", "priceRange",
+                    "address", "openDay", "openTime", "lat", "lon")
+_ACTIVITY_FIELDS = ("_id", "topActivities", "description",
+                    "fee", "essentials")
+_DIRECT_FIELDS   = ("_id", "name", "description", "address", "lat", "lon")
+
+# onModel groupings
+_PLACE_MODELS    = {"place", "hiddenGem", "hiddengem", "nearbyspot", "nearbySpot"}
+_SHOPPING_MODELS = {"shop"}
+_ACTIVITY_MODELS = {"activity"}
+
+_DIRECT_COLLECTION_MAP = {
     "accommodation":  "accommodations",
     "accommodations": "accommodations",
     "festivals":      "festivals",
@@ -26,114 +62,132 @@ _DIRECT_COLLECTION_MAP: Dict[str, str] = {
     "transport":      "localtransports",
 }
 
-# ── onModel groups ──────────────────────────────────────────────────────────────
-_PLACE_MODELS     = {"place", "hiddenGem", "hiddengem", "nearbyspot", "nearbySpot"}
-_SHOPPING_MODELS  = {"shop"}
-_ACTIVITY_MODELS  = {"activity"}
+
+def _slim(doc: Dict, fields: tuple) -> Dict:
+    """Return only the specified fields (non-None) from a doc."""
+    return {f: doc[f] for f in fields if doc.get(f) is not None}
 
 
-def _fetch_by_id(collection_name: str, doc_id: str) -> Optional[Dict[str, Any]]:
-    """Direct single-document lookup by _id."""
-    tool = MongoDBQueryTool(collection_name=collection_name)
-    results = tool._run(query_filter={"_id": ObjectId(doc_id)}, limit=1)
-    return results[0] if results else None
+# ── Tool class ─────────────────────────────────────────────────────────────────
+
+class ItineraryTool(BaseTool):
+    name: str = "itinerary_tool"
+    description: str = (
+        "Fetches and resolves a user's wishlist items for a given city "
+        "using the appropriate pre-built tools, returning slim data for "
+        "itinerary planning."
+    )
+    args_schema: Type[BaseModel] = ItineraryToolInput
+
+    def _run(
+        self,
+        user_id: str,
+        city_name: str,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        start = time.time()
+
+        # ── 1. Fetch user and filter wishlist by city ──────────────────────────
+        users_col = mongodb_client.get_collection("users")
+        user_doc  = users_col.find_one({"_id": ObjectId(user_id)})
+        if not user_doc:
+            raise ValueError(f"User '{user_id}' not found.")
+
+        city_items = [
+            item for item in user_doc.get("wishlist", [])
+            if item.get("cityName", "").lower() == city_name.lower()
+        ]
+        if not city_items:
+            print(f"   ⚠️  No wishlist items found for {city_name}")
+            return []
+
+        # ── 2. Bucket parentRef _ids by onModel type ───────────────────────────
+        place_ids    : Dict[str, Dict] = {}   # parentId → wishlist meta
+        shopping_ids : Dict[str, Dict] = {}
+        activity_ids : Dict[str, Dict] = {}
+        direct_items : List[Dict]      = []   # items for fallback direct lookup
+
+        for item in city_items:
+            on_model   = item.get("onModel", "")
+            on_lower   = on_model.lower()
+            parent_ref = item.get("parentRef", {})
+            parent_id  = (
+                parent_ref.get("$oid", str(parent_ref))
+                if isinstance(parent_ref, dict)
+                else str(parent_ref)
+            )
+            meta = {
+                "_wishlistId": str(item.get("_id", "")),
+                "_onModel":    on_model,
+                "_cityName":   item.get("cityName", city_name),
+                "_parentId":   parent_id,
+            }
+            if on_lower in _PLACE_MODELS:
+                place_ids[parent_id] = meta
+            elif on_lower in _SHOPPING_MODELS:
+                shopping_ids[parent_id] = meta
+            elif on_lower in _ACTIVITY_MODELS:
+                activity_ids[parent_id] = meta
+            else:
+                direct_items.append({"meta": meta, "on_lower": on_lower, "parent_id": parent_id})
+
+        wishlist: List[Dict[str, Any]] = []
+
+        # ── 3a. Place / HiddenGem / NearbySpot → place_search_tool ────────────
+        if place_ids:
+            print(f"   🏛️  place_search_tool → fetching for {city_name}")
+            all_places = place_search_tool._run(cityName=city_name, maxResults=200)
+            for doc in all_places:
+                if doc.get("_id") in place_ids:
+                    meta = place_ids[doc["_id"]]
+                    entry = _slim(doc, _PLACE_FIELDS)
+                    entry.update(meta)
+                    wishlist.append(entry)
+
+        # ── 3b. Shop → shopping_search_tool ───────────────────────────────────
+        if shopping_ids:
+            print(f"   🛍️  shopping_search_tool → fetching for {city_name}")
+            all_shops = shopping_search_tool._run(cityName=city_name, maxResults=200)
+            for doc in all_shops:
+                if doc.get("_id") in shopping_ids:
+                    meta = shopping_ids[doc["_id"]]
+                    entry = _slim(doc, _SHOPPING_FIELDS)
+                    entry.update(meta)
+                    wishlist.append(entry)
+
+        # ── 3c. Activity → activities_tool ────────────────────────────────────
+        if activity_ids:
+            print(f"   🎯  activities_tool → fetching for {city_name}")
+            all_activities = activities_tool._run(cityName=city_name, maxResults=200)
+            for doc in all_activities:
+                if doc.get("_id") in activity_ids:
+                    meta = activity_ids[doc["_id"]]
+                    entry = _slim(doc, _ACTIVITY_FIELDS)
+                    entry.update(meta)
+                    wishlist.append(entry)
+
+        # ── 3d. Direct fallback (Accommodation, festivals, etc.) ───────────────
+        for item_info in direct_items:
+            meta      = item_info["meta"]
+            on_lower  = item_info["on_lower"]
+            parent_id = item_info["parent_id"]
+            col = _DIRECT_COLLECTION_MAP.get(on_lower, on_lower + "s")
+            print(f"   📦  direct lookup → {col} id={parent_id}")
+            tool    = MongoDBQueryTool(collection_name=col)
+            results = tool._run(
+                query_filter={"_id": ObjectId(parent_id)},
+                limit=1,
+            )
+            if results:
+                entry = _slim(results[0], _DIRECT_FIELDS)
+                entry.update(meta)
+                wishlist.append(entry)
+
+        print(f"   ✅ {len(wishlist)}/{len(city_items)} items resolved | "
+              f"{time.time() - start:.2f}s")
+        print(f"   🗂️  Wishlist items: {wishlist}")
+        return wishlist
 
 
-def _resolve_place(parent_id: str) -> Optional[Dict[str, Any]]:
-    """Search across placestovisits, hiddengems, nearbytouristspots by _id."""
-    for collection in ("placestovisits", "hiddengems", "nearbytouristspots"):
-        doc = _fetch_by_id(collection, parent_id)
-        if doc:
-            doc["_resolvedFrom"] = collection
-            return doc
-    return None
-
-
-def _resolve_shopping(parent_id: str) -> Optional[Dict[str, Any]]:
-    doc = _fetch_by_id("shoppings", parent_id)
-    if doc:
-        doc["_resolvedFrom"] = "shoppings"
-    return doc
-
-
-def _resolve_activity(parent_id: str) -> Optional[Dict[str, Any]]:
-    doc = _fetch_by_id("activities", parent_id)
-    if doc:
-        doc["_resolvedFrom"] = "activities"
-    return doc
-
-
-def _resolve_direct(on_model_lower: str, parent_id: str) -> Optional[Dict[str, Any]]:
-    """Fallback: look up in the collection mapped from onModel."""
-    collection = _DIRECT_COLLECTION_MAP.get(on_model_lower, on_model_lower + "s")
-    doc = _fetch_by_id(collection, parent_id)
-    if doc:
-        doc["_resolvedFrom"] = collection
-    return doc
-
-
-# ── Public API ─────────────────────────────────────────────────────────────────
-
-def fetch_wishlist_items(user_id: str, city_name: str) -> List[Dict[str, Any]]:
-    """
-    Load the user document, filter wishlist by city_name, then resolve
-    every item to its full MongoDB document using the correct tool/collection.
-
-    Returns a list of enriched dicts ready to be passed to the LLM.
-    """
-    # 1. Fetch user
-    users_col = mongodb_client.get_collection("users")
-    user_doc  = users_col.find_one({"_id": ObjectId(user_id)})
-    if not user_doc:
-        raise ValueError(f"User '{user_id}' not found.")
-
-    raw_wishlist: List[Dict] = user_doc.get("wishlist", [])
-
-    # 2. Filter by city (case-insensitive)
-    city_items = [
-        item for item in raw_wishlist
-        if item.get("cityName", "").lower() == city_name.lower()
-    ]
-
-    if not city_items:
-        return []
-
-    # 3. Resolve each item
-    enriched: List[Dict[str, Any]] = []
-    for item in city_items:
-        on_model   = item.get("onModel", "")
-        on_lower   = on_model.lower()
-        parent_ref = item.get("parentRef")
-        wishlist_id = str(item.get("_id", ""))
-
-        if not parent_ref:
-            continue
-
-        parent_id = str(parent_ref) if not isinstance(parent_ref, str) else parent_ref
-        # parentRef may come as {"$oid": "..."} dict from the schema serialisation
-        if isinstance(parent_ref, dict):
-            parent_id = parent_ref.get("$oid", str(parent_ref))
-
-        print(f"   🔎 Resolving onModel={on_model} id={parent_id}")
-
-        resolved: Optional[Dict[str, Any]] = None
-
-        if on_lower in _PLACE_MODELS:
-            resolved = _resolve_place(parent_id)
-        elif on_lower in _SHOPPING_MODELS:
-            resolved = _resolve_shopping(parent_id)
-        elif on_lower in _ACTIVITY_MODELS:
-            resolved = _resolve_activity(parent_id)
-        else:
-            resolved = _resolve_direct(on_lower, parent_id)
-
-        if resolved:
-            resolved["_wishlistId"] = wishlist_id
-            resolved["_onModel"]    = on_model
-            resolved["_cityName"]   = item.get("cityName", city_name)
-            enriched.append(resolved)
-        else:
-            print(f"   ⚠️  Could not resolve {on_model} id={parent_id}")
-
-    print(f"   ✅ Resolved {len(enriched)}/{len(city_items)} wishlist items for {city_name}")
-    return enriched
+# Global instance
+itinerary_tool = ItineraryTool()

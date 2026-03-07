@@ -18,7 +18,7 @@ from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 
 from services.itinerary_classifier import itinerary_classifier
-from tools.itinerary_tool import fetch_wishlist_items
+from tools.itinerary_tool import itinerary_tool
 
 load_dotenv()
 
@@ -71,9 +71,9 @@ class ItineraryWrapper:
         budget   = classification.budget
         duration = classification.duration
 
-        # ── Step 2: fetch + resolve wishlist items ────────────────────────────
-        print(f"   🗂️  Fetching wishlist items for {city}...")
-        items = fetch_wishlist_items(user_id=user_id, city_name=city)
+        # ── Step 2: fetch + resolve wishlist items via itinerary_tool ──────────
+        print(f"   🗂️  Running itinerary_tool for {city}...")
+        items = itinerary_tool._run(user_id=user_id, city_name=city)
 
         if not items:
             return json.dumps({
@@ -184,3 +184,4 @@ Generate the full day-wise itinerary JSON now."""
 
 # Global instance
 itinerary_wrapper = ItineraryWrapper()
+
