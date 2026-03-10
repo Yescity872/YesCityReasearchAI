@@ -69,7 +69,7 @@ class QueryClassifier:
                     classify this user query into ONE category from: {categories}
 
                     Also extract:
-                    1. The city name ( extracted from query if mentioned)
+                    1. The city name (extracted from the query if mentioned). IMPORTANT: If the city name appears to be misspelled or is a phonetic/approximate spelling, correct it to the proper, well-known city name (e.g. "Mumbay" → "Mumbai", "Deli" → "Delhi", "Agara" → "Agra", "Banglore" → "Bangalore"). Always return the correct canonical spelling of the city.
                     2. key parameters relevant to the category
 
                     User Query: "{query}"
@@ -77,7 +77,7 @@ class QueryClassifier:
                     Respond ONLY with valid JSON in this exact format:
                     {{
                         "category":"category_name",
-                        "cityName":"city_name_or_null",
+                        "cityName":"correct_city_name_or_null",
                         "parameters":
                         {{
                             "param1":"value1",
@@ -86,7 +86,7 @@ class QueryClassifier:
                         "confidence":confidence_score_between_0_and_1
                     }}
 
-                    Example response for "Find pizza places in Agra":
+                    Example response for "Find pizza places in Agara" (note: Agara is misspelled, correct to Agra):
                     {{
                         "category":"foods",
                         "cityName":"Agra",
@@ -98,7 +98,7 @@ class QueryClassifier:
                         "confidence":0.95
                     }}
 
-                    IMPORTANT: If city is not mentioned, use "cityName": null
+                    IMPORTANT: If city is not mentioned, use "cityName": null. Always correct misspelled city names to their proper spelling.
             """
         )
 
