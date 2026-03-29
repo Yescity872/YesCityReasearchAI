@@ -1,7 +1,7 @@
 import os
 import sys
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -12,6 +12,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from database.mongodb_client import mongodb_client
 from routes.search_routes import search_router
 from routes.itinerary_routes import router as itinerary_router
+from dependencies.credit_check import check_and_deduct_credits
 
 load_dotenv()
 
@@ -53,12 +54,21 @@ async def startup_event():
     try:
         if mongodb_client.db is None:
             print("❌ Failed to connect to database.")
+        else:
+            # Setup credits collection indices
+            try:
+                db = mongodb_client.db
+                db.credits.create_index("ip_address")
+                # Expire documents after 30 days (2592000 seconds)
+                db.credits.create_index("last_updated", expireAfterSeconds=2592000)
+            except Exception as e:
+                print(f"⚠️ Failed to create indexes: {e}")
     except Exception as e:
         print(f"❌ Database error: {e}")
 
 # Search endpoint
 @app.post("/api/search", response_model=SearchResponse, responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}})
-async def api_search(request: SearchRequest):
+async def api_search(request: SearchRequest, response_obj: Response, remaining_credits: int = Depends(check_and_deduct_credits)):
     """
     Search endpoint for YesCity.
     Send a POST request with JSON body: {"query": "your search query"}
@@ -70,6 +80,7 @@ async def api_search(request: SearchRequest):
         # Call your existing search function
         response = search_router.handle_request(request.query)
         
+        response_obj.headers["X-Remaining-Credits"] = str(remaining_credits)
         return SearchResponse(
             response=response,
             status="success",
@@ -83,7 +94,7 @@ async def api_search(request: SearchRequest):
 
 # GET endpoint for simple queries
 @app.get("/api/search", response_model=SearchResponse)
-async def api_search_get(q: Optional[str] = None):
+async def api_search_get(response_obj: Response, q: Optional[str] = None, remaining_credits: int = Depends(check_and_deduct_credits)):
     """
     GET endpoint for search.
     Usage: /api/search?q=your+query
@@ -94,6 +105,7 @@ async def api_search_get(q: Optional[str] = None):
         
         response = search_router.handle_request(q)
         
+        response_obj.headers["X-Remaining-Credits"] = str(remaining_credits)
         return SearchResponse(
             response=response,
             status="success",
