@@ -22,7 +22,11 @@ app = FastAPI(title="YesCity Search API", version="1.0.0")
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with your frontend domain
+    allow_origins=[
+        "https://www.yescity.in",
+        "https://yescity.in",
+        "http://localhost:3000" # Added localhost for local development just in case
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
