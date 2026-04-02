@@ -10,7 +10,7 @@ from typing import Optional
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from database.mongodb_client import mongodb_client
-from routes.search_routes import search_router
+from routes.search_routes import router as search_router
 from routes.itinerary_routes import router as itinerary_router
 from dependencies.credit_check import check_and_deduct_credits
 
@@ -34,19 +34,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(itinerary_router, prefix="/api")
-
-# Pydantic models for request/response
-class SearchRequest(BaseModel):
-    query: str
-
-class SearchResponse(BaseModel):
-    response: str
-    status: str
-    query: str
-
-class ErrorResponse(BaseModel):
-    error: str
-    status: str
+app.include_router(search_router, prefix="/api")
 
 @app.head('/')
 def root_head():
@@ -70,56 +58,7 @@ async def startup_event():
     except Exception as e:
         print(f"❌ Database error: {e}")
 
-# Search endpoint
-@app.post("/api/search", response_model=SearchResponse, responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}})
-async def api_search(request: SearchRequest, response_obj: Response, remaining_credits: int = Depends(check_and_deduct_credits)):
-    """
-    Search endpoint for YesCity.
-    Send a POST request with JSON body: {"query": "your search query"}
-    """
-    try:
-        if not request.query.strip():
-            raise HTTPException(status_code=400, detail="Query cannot be empty")
-        
-        # Call your existing search function
-        response = search_router.handle_request(request.query)
-        
-        response_obj.headers["X-Remaining-Credits"] = str(remaining_credits)
-        return SearchResponse(
-            response=response,
-            status="success",
-            query=request.query
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-# GET endpoint for simple queries
-@app.get("/api/search", response_model=SearchResponse)
-async def api_search_get(response_obj: Response, q: Optional[str] = None, remaining_credits: int = Depends(check_and_deduct_credits)):
-    """
-    GET endpoint for search.
-    Usage: /api/search?q=your+query
-    """
-    try:
-        if not q or not q.strip():
-            raise HTTPException(status_code=400, detail="Query parameter 'q' is required")
-        
-        response = search_router.handle_request(q)
-        
-        response_obj.headers["X-Remaining-Credits"] = str(remaining_credits)
-        return SearchResponse(
-            response=response,
-            status="success",
-            query=q
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 # Health check
 
